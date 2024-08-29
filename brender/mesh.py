@@ -1,9 +1,9 @@
 from contextlib import contextmanager
 
-import bpy
+import bpy, bmesh
 import mathutils
 
-from brender.world_scale_uvs import measure_uv_density
+from .world_scale_uvs import measure_uv_density
 from toolbox import cameras
 
 
@@ -12,18 +12,35 @@ _context_stack = []
 
 PASS_INDEX_UV_DENSITY_MULT = 10000.0
 
+BPY_VERSION_MAJOR = bpy.app.version[0]
+BPY_VERSION_MINOR = bpy.app.version[1]
+
+IS_BPY_279 = BPY_VERSION_MAJOR == 2 and BPY_VERSION_MINOR < 80
 
 @contextmanager
 def select_object(bobj):
-    _context_stack.append(bpy.context.scene.objects.active)
-    bpy.context.scene.objects.active = bobj
-    bobj.select = True
-    try:
-        yield bobj
-    finally:
-        bobj.select = False
-        bpy.context.scene.objects.active = _context_stack.pop()
-
+    if IS_BPY_279:
+        _context_stack.append(bpy.context.scene.objects.active)
+        bpy.context.scene.objects.active = bobj
+        bobj.select = True
+        
+        try:
+            yield bobj
+        finally:
+            bobj.select = False                
+            bpy.context.scene.objects.active = _context_stack.pop()
+        
+    else:
+        _context_stack.append(bpy.context.view_layer.objects.active)
+        bpy.context.view_layer.objects.active = bobj
+        bobj.select_set(True)
+        
+        try:
+            yield bobj
+        finally:
+            bobj.select_set(False)
+                
+            bpy.context.view_layer.objects.active = _context_stack.pop()
 
 
 @contextmanager
@@ -36,7 +53,10 @@ def stash_selection():
         bpy.ops.object.select_all(action='DESELECT')
         for bobj in was_selected:
             try:
-                bobj.select = True
+                if IS_BPY_279:
+                    bobj.select = True
+                else:
+                    bobj.select_set(True)
             except ReferenceError:
                 pass
 
@@ -45,7 +65,10 @@ def stash_selection():
 def select_objects(bobjs):
     with stash_selection():
         for bobj in bobjs:
-            bobj.select = True
+            if IS_BPY_279:
+                bobj.select = True
+            else:
+                bobj.select_set(True)
         yield bobjs
 
 
@@ -62,7 +85,12 @@ def unwrap_uv(bobj, mode):
     with select_object(bobj):
         with edit_mode():
             bpy.ops.mesh.select_all(action='DESELECT')
-            bobj.select = True
+            
+            if IS_BPY_279:
+                bobj.select = True
+            else:
+                bobj.select_set(True)
+            
             bpy.ops.mesh.select_all(action='SELECT')
             if mode == 'smart_uv':
                 bpy.ops.uv.smart_project()
@@ -70,8 +98,11 @@ def unwrap_uv(bobj, mode):
                 bpy.ops.uv.sphere_project()
             else:
                 raise ValueError(f'Invalid unwrap mode {mode}')
-            bobj.select = False
-
+            
+            if IS_BPY_279:
+                bobj.select = False
+            else:
+                bobj.select_set(False)
 
 class Mesh:
     _next_id = 0
@@ -95,7 +126,7 @@ class Mesh:
 
     @classmethod
     def from_3ds(cls, scene, path) -> 'Mesh':
-        print(f'Importing mesh from {path}')
+        print(f'Importing mesh from {path}', flush = True)
 
         with scene.select():
             bpy.ops.import_scene.autodesk_3ds(filepath=str(path))
@@ -113,7 +144,10 @@ class Mesh:
         parent_bobj = bpy.context.selected_objects[0]
         bpy.ops.object.select_all(action='DESELECT')
         with select_objects(bobjs):
-            parent_bobj.select = True
+            if IS_BPY_279:
+                parent_bobj.select = True
+            else:
+                parent_bobj.select_set(True)
             bpy.ops.object.parent_set(type='OBJECT', keep_transform=False)
         if recenter:
             parent_bobj.location = (0, 0, 0)
@@ -219,7 +253,11 @@ class Mesh:
             with select_object(bobj):
                 with edit_mode():
                     _, _, uv_density = measure_uv_density(bobj)
-                    uv_density *= base_size
+                    
+                    if uv_density is None:
+                        uv_density = base_size
+                    else:
+                        uv_density *= base_size
                     bobj.pass_index = PASS_INDEX_UV_DENSITY_MULT * uv_density
 
     def compute_min_pos(self):
@@ -299,7 +337,10 @@ class Empty(object):
 
     def set_parent_of(self, bobj):
         with select_object(self.bobj):
-            bobj.select = True
+            if IS_BPY_279:
+                bobj.select = True
+            else:
+                bobj.select_set(True)
             bpy.ops.object.parent_set(type='OBJECT', keep_transform=False)
 
     def rotate(self, angle, axis):
@@ -311,17 +352,25 @@ class Empty(object):
 
 
 class Sphere(Mesh):
-
-    def __init__(self, position, radius,
-                 segments=128, rings=64, **kwargs):
-        bpy.ops.mesh.primitive_uv_sphere_add(
-            size=radius, location=position, segments=128, ring_count=rings)
+    def __init__(self, location, radius, segments=128, rings=64, **kwargs):
+        # bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=1.0, calc_uvs=True, enter_editmode=False, align='WORLD', location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), scale=(0.0, 0.0, 0.0))
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=location, segments=segments, ring_count=rings)
         bobj = bpy.context.selected_objects[0]
-        bpy.ops.object.mode_set(mode='EDIT')
-        bobj.select = True
-        bpy.ops.mesh.faces_shade_smooth()
-        bobj.select = False
-        super().__init__([bobj], **kwargs)
+        # bpy.ops.object.mode_set(mode='EDIT')
+        
+        # if IS_BPY_279:
+        #     bobj.select = True
+        # else:
+        #     bobj.select_set(True)
+
+        # bpy.ops.mesh.faces_shade_smooth()
+        
+        # if IS_BPY_279:
+        #     bobj.select = False
+        # else:
+        #     bobj.select_set(False)
+
+        super().__init__(bobj, **kwargs)
 
 
 class Monkey(Mesh):
@@ -336,11 +385,61 @@ class Monkey(Mesh):
 
 
 class Plane(Mesh):
-
-    def __init__(self, position, radius=100, **kwargs):
-        bpy.ops.mesh.primitive_plane_add(radius=radius, location=position)
+    def __init__(self, size=2.0, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), **kwargs):
+        # bpy.ops.mesh.primitive_plane_add(size=2.0, calc_uvs=True, enter_editmode=False, align='WORLD', location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), scale=(0.0, 0.0, 0.0))
+        bpy.ops.mesh.primitive_plane_add(size=size, location=location, rotation=rotation)
         bobj = bpy.context.selected_objects[0]
+        
         super().__init__([bobj], **kwargs)
+        
+class PhotoCanvas(Mesh):
+    def __init__(self, size=2.0, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), **kwargs):
+        # bpy.ops.mesh.primitive_plane_add(size=2.0, calc_uvs=True, enter_editmode=False, align='WORLD', location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), scale=(0.0, 0.0, 0.0))
+        bpy.ops.mesh.primitive_plane_add(size=size, location=location, rotation=rotation)
+        bobj = bpy.context.selected_objects[0]
+        
+        # with select_object(bobj):
+            # with edit_mode():
+                
+        me = bobj.data
+
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        
+        # edges_to_extrude = []
+        # for e in bm.edges:
+        #     if e.index == 0:
+        #         e.select = True
+        #         edges_to_extrude.append(e)
+        #     else:
+        #         e.select = False
+        
+        # edges_start_a = bm.edges[:]
+        edges_to_extrude = [e for e in bm.edges if e.index == 0]
+                
+        ret = bmesh.ops.extrude_edge_only(bm, edges = edges_to_extrude) # edges_to_extrude)
+        geom_extrude_mid = ret["geom"]
+        
+        verts_extrude_b = [ele for ele in geom_extrude_mid if isinstance(ele, bmesh.types.BMVert)]
+        # edges_extrude_b = [ele for ele in geom_extrude_mid
+        #                 if isinstance(ele, bmesh.types.BMEdge) and ele.is_boundary]
+
+        bmesh.ops.translate(
+                bm,
+                verts=verts_extrude_b,
+                vec=(0.0, 0.0, size))
+
+        bm.to_mesh(me)
+        bm.free()
+        
+        # Add Bevel Modifier
+        bevel_mod = bobj.modifiers.new(name = "MyBevel", type = 'BEVEL')
+        
+        bevel_mod.segments = 8
+        bevel_mod.offset_type = 'OFFSET'
+        bevel_mod.width = 0.4
+        
+        super().__init__(bobj, **kwargs)
 
 
 

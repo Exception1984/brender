@@ -7,6 +7,10 @@ import os
 import sys
 from contextlib import contextmanager
 
+BPY_VERSION_MAJOR = bpy.app.version[0]
+BPY_VERSION_MINOR = bpy.app.version[1]
+
+IS_BPY_279 = BPY_VERSION_MAJOR == 2 and BPY_VERSION_MINOR < 80
 
 @contextmanager
 def suppress_stdout():

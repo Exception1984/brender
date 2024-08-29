@@ -5,12 +5,10 @@ import mathutils
 import numpy as np
 from scipy import linalg
 
-from brender.mesh import Empty
-
+from .mesh import Empty
 
 def _vec_len(v):
     return math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
-
 
 class Camera:
     def __init__(self, bobj):

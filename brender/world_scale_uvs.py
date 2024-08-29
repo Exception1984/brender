@@ -4,11 +4,15 @@ Some parts adapted from Magic UV:
 """
 import math
 
-from brender.utils import check_version
+from .utils import check_version
 
 import bpy
 import bmesh
 
+BPY_VERSION_MAJOR = bpy.app.version[0]
+BPY_VERSION_MINOR = bpy.app.version[1]
+
+IS_BPY_279 = BPY_VERSION_MAJOR == 2 and BPY_VERSION_MINOR < 80
 
 def calc_polygon_2d_area(points):
     area = 0.0
@@ -67,9 +71,10 @@ def measure_uv_area(obj):
         return None
     uv_layer = bm.loops.layers.uv.verify()
 
-    if not bm.faces.layers.tex:
-        return None
-    tex_layer = bm.faces.layers.tex.verify()
+    if IS_BPY_279:
+        if not bm.faces.layers.tex:
+            return None
+        tex_layer = bm.faces.layers.tex.verify()
 
     sel_faces = [f for f in bm.faces if f.select]
 
@@ -102,7 +107,7 @@ def measure_uv_area(obj):
 
 def measure_uv_density(obj):
     mesh_area = measure_mesh_area(obj)
-    uv_area = measure_uv_area(obj)
+    uv_area = measure_uv_area(obj) 
 
     if not uv_area:
         return None, None, None

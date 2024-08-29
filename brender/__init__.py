@@ -1,4 +1,5 @@
 from .brender import Brender
 from .camera import BasicCamera, CalibratedCamera
 from .scene import Scene
-from .mesh import Mesh
+from .mesh import Mesh, Plane, PhotoCanvas, Sphere
+from .light import PointLight

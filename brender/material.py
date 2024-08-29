@@ -9,9 +9,10 @@ import math
 import warnings
 
 import mdl
-from brender.mesh import PASS_INDEX_UV_DENSITY_MULT
-from toolbox.io.images import load_image, load_hdr
+from .mesh import PASS_INDEX_UV_DENSITY_MULT
+from .utils import IS_BPY_279
 
+from toolbox.io.images import load_image, load_hdr
 
 class BlenderMaterial(object):
     _next_id = 0
@@ -60,12 +61,12 @@ class NodesMaterial(BlenderMaterial):
         self.uv_translation = uv_translation
         self.uv_rotation = uv_rotation
 
-        # self.clear_nodes()
+        self.clear_nodes() # Why was this commented?
         self.uv_ref_scale_node = None
 
         nodes = self.bobj.node_tree.nodes
         if 'Material Output' not in nodes:
-            output_node = nodes.new(type="ShaderNodeOutput")
+            output_node = nodes.new(type = "ShaderNodeOutputMaterial") # (type="ShaderNodeOutput")
             output_node.name = "Material Output"
 
         self.init_nodes()
@@ -74,7 +75,7 @@ class NodesMaterial(BlenderMaterial):
         self.bobj.node_tree.nodes.clear()
         self.bobj.node_tree.links.clear()
         nodes = self.bobj.node_tree.nodes
-        output_node = nodes.new(type="ShaderNodeOutput")
+        output_node = nodes.new(type = "ShaderNodeOutputMaterial") #(type="ShaderNodeOutput")
         output_node.name = "Material Output"
 
     @property
@@ -88,7 +89,7 @@ class NodesMaterial(BlenderMaterial):
         uv_node = self.init_uv_node(nodes, links)
 
         for map_node in map_nodes:
-            links.new(map_node.inputs[0], uv_node.outputs[0])
+            links.new(map_node.inputs['Vector'], uv_node.outputs['Vector']) # [0] -> [0]
 
     def set_uv_ref_scale(self, uv_ref_scale):
         self.uv_ref_scale = uv_ref_scale
@@ -98,7 +99,7 @@ class NodesMaterial(BlenderMaterial):
         if self.uv_ref_scale_node is None:
             raise ValueError('UV scale node has not been initialized yet.')
 
-        self.uv_ref_scale_node.outputs[0].default_value = self.uv_ref_scale
+        self.uv_ref_scale_node.outputs['Value'].default_value = self.uv_ref_scale # [0]
 
     def init_uv_node(self, nodes, links):
         self.uv_ref_scale_node = nodes.new(type='ShaderNodeValue')
@@ -107,38 +108,47 @@ class NodesMaterial(BlenderMaterial):
         obj_info_node = nodes.new(type='ShaderNodeObjectInfo')
         obj_info_to_uv_density_node = nodes.new(type='ShaderNodeMath')
         obj_info_to_uv_density_node.operation = 'DIVIDE'
-        obj_info_to_uv_density_node.inputs[1].default_value = \
-            PASS_INDEX_UV_DENSITY_MULT
-        links.new(obj_info_to_uv_density_node.inputs[0], obj_info_node.outputs[1])
+        obj_info_to_uv_density_node.inputs[1].default_value = PASS_INDEX_UV_DENSITY_MULT # Denominator # [1]
+        links.new(obj_info_to_uv_density_node.inputs[0], obj_info_node.outputs['Object Index']) # Numerator # [0] -> [1], probably 'Object Index' and not 'Color'
 
         # Divide our desired scale by the object UV density:
         #   uv_scale = uv_ref_scale / uv_density
         uv_scale_node = nodes.new(type='ShaderNodeMath')
         uv_scale_node.operation = 'DIVIDE'
-        links.new(uv_scale_node.inputs[0], self.uv_ref_scale_node.outputs[0])
-        links.new(uv_scale_node.inputs[1],
-                  obj_info_to_uv_density_node.outputs[0])
+        links.new(uv_scale_node.inputs[0], self.uv_ref_scale_node.outputs[0])        # [0] -> [0]
+        links.new(uv_scale_node.inputs[1], obj_info_to_uv_density_node.outputs[0])   # [1] -> [0]
 
         uv_map_node = nodes.new(type="ShaderNodeUVMap")
         separate_uv_node = nodes.new(type="ShaderNodeSeparateXYZ")
         combine_uv_node = nodes.new(type="ShaderNodeCombineXYZ")
 
-        links.new(separate_uv_node.inputs[0], uv_map_node.outputs[0])
+        links.new(separate_uv_node.inputs[0], uv_map_node.outputs[0])                # [0] -> [0]
 
         for i in [0, 1, 2]:
             mult_node = nodes.new(type="ShaderNodeMath")
             mult_node.operation = 'MULTIPLY'
-            links.new(mult_node.inputs[0], separate_uv_node.outputs[i])
-            links.new(mult_node.inputs[1], uv_scale_node.outputs[0])
-            links.new(combine_uv_node.inputs[i], mult_node.outputs[0])
+            links.new(mult_node.inputs[0], separate_uv_node.outputs[i])              # [0] -> [i]
+            links.new(mult_node.inputs[1], uv_scale_node.outputs[0])                 # [1] -> [0]
+            links.new(combine_uv_node.inputs[i], mult_node.outputs[0])               # [i] -> [0]
 
         # Translate (or possible rotate) UVs.
         mapping_node = nodes.new(type="ShaderNodeMapping")
         mapping_node.vector_type = 'TEXTURE'
-        mapping_node.translation[0] = self.uv_translation[0]
-        mapping_node.translation[1] = self.uv_translation[1]
-        mapping_node.rotation[2] = self.uv_rotation
-        links.new(mapping_node.inputs[0], combine_uv_node.outputs[0])
+        
+        # old way: light_node.rotation[0] = 3.14159
+        # new way, basically just add .inputs then 'Rotation', 'Location', or 'Scale' as you need, and then .default_value
+        # light_node.inputs['Rotation'].default_value = (0,0,3.14159)
+        
+        if IS_BPY_279:
+            mapping_node.translation[0] = self.uv_translation[0]
+            mapping_node.translation[1] = self.uv_translation[1]
+            mapping_node.rotation[2] = self.uv_rotation
+        else:
+            mapping_node.inputs['Location'].default_value[0] = self.uv_translation[0]   # [0] -> [0]
+            mapping_node.inputs['Location'].default_value[1] = self.uv_translation[1]   # [1] -> [1]
+            mapping_node.inputs['Rotation'].default_value[2] = self.uv_rotation         # [2]
+            
+        links.new(mapping_node.inputs[0], combine_uv_node.outputs[0])                   # [0] -> [0]
 
         return mapping_node
         # return combine_uv_node
@@ -311,7 +321,6 @@ class SVBRDFMaterial(NodesMaterial):
         return 1.0 - gloss_map.mean()
 
 
-
 class MDLMaterial(NodesMaterial):
     BASE_COLOR_INP_ID = 0
     SUBSURF_COLOR_INP_ID = 3
@@ -347,7 +356,7 @@ class MDLMaterial(NodesMaterial):
                  *,
                  mdl_path,
                  base_color,
-                 roughness,
+                 roughness = 0.0,
                  opacity=1.0,
                  normal=None,
                  metallic=0.0,
@@ -357,6 +366,10 @@ class MDLMaterial(NodesMaterial):
                  ior=1.450,
                  height=None,
                  height_scale=1.0,
+                 clearcoat_normal = None,
+                 clearcoat_roughness = None,
+                 clearcoat_weight = None,
+                 do_real_displacement = False,
                  **kwargs):
         self.mdl_path = mdl_path
         self.base_color = base_color
@@ -370,6 +383,11 @@ class MDLMaterial(NodesMaterial):
         self.ior = ior
         self.height = height
         self.height_scale = height_scale
+        self.do_real_displacement = do_real_displacement
+        
+        self.clearcoat_normal = clearcoat_normal
+        self.clearcoat_roughness = clearcoat_roughness
+        self.clearcoat_weight = clearcoat_weight
 
         self.tex_nodes = []
         super().__init__(**kwargs)
@@ -392,9 +410,19 @@ class MDLMaterial(NodesMaterial):
 
         if isinstance(value, Path):
             tex_node = nodes.new(type="ShaderNodeTexImage")
-            tex_node.color_space = color_space
+
+            if IS_BPY_279:
+                tex_node.color_space = color_space
+                
             tex_node.image = bpy.data.images.load(
                 filepath=str(value))
+            
+            if not IS_BPY_279:
+                if color_space == 'NONE':
+                    tex_node.image.colorspace_settings.name = 'Non-Color'
+                elif color_space == 'COLOR':
+                    tex_node.image.colorspace_settings.name = 'sRGB' # or 'Linear' ?
+            
             self.tex_nodes.append(tex_node)
             if invert:
                 opacity_invert_node = nodes.new(type='ShaderNodeInvert')
@@ -429,67 +457,125 @@ class MDLMaterial(NodesMaterial):
 
             if isinstance(self.normal, Path):
                 normal_tex_node = nodes.new(type="ShaderNodeTexImage")
-                normal_tex_node.color_space = 'NONE'
+                
+                if IS_BPY_279:
+                    normal_tex_node.color_space = 'NONE'
+                    
                 normal_tex_node.image = bpy.data.images.load(
                     filepath=str(self.normal))
+                
+                if not IS_BPY_279:
+                    normal_tex_node.image.colorspace_settings.name = 'Non-Color'
+                
                 self.tex_nodes.append(normal_tex_node)
-                links.new(normal_map_node.inputs[1], normal_tex_node.outputs[0])
+                links.new(normal_map_node.inputs['Color'], normal_tex_node.outputs['Color']) # [1] -> [0]
+                
+                # links.new(bsdf_node.inputs['Normal'], normal_map_node.outputs['Normal']) # EDIT, this is done later. Added by myself, check if correct
             elif isinstance(self.normal, tuple):
-                normal_map_node.inputs[1].default_value = self.normal
+                normal_map_node.inputs['Color'].default_value = self.normal # [1]
 
         if not self.base_color:
             raise RuntimeError('Base color must be defined.')
         else:
-            self._add_input(self.base_color, self.BASE_COLOR_INP_ID, 'COLOR',
-                            bsdf_node)
+            self._add_input(self.base_color, 'Base Color', 'COLOR', bsdf_node) # self.BASE_COLOR_INP_ID
 
         if self.subsurface_color:
-            self._add_input(self.subsurface_color, self.SUBSURF_COLOR_INP_ID,
-                            'COLOR', bsdf_node)
+            self._add_input(self.subsurface_color, 'Subsurface Color', 'COLOR', bsdf_node) # self.SUBSURF_COLOR_INP_ID
 
         if self.roughness:
-            self._add_input(self.roughness, self.ROUGHNESS_INP_ID, 'NONE',
-                            bsdf_node)
+            self._add_input(self.roughness, 'Roughness', 'NONE', bsdf_node) # self.ROUGHNESS_INP_ID
 
         if self.metallic:
-            self._add_input(self.metallic, self.METALLIC_INP_ID, 'NONE',
-                            bsdf_node)
+            self._add_input(self.metallic, 'Metallic', 'NONE', bsdf_node) # self.METALLIC_INP_ID
+            
+        # CLEARCOAT TEXTURES
+        if self.clearcoat_normal:
+            claearcoat_normal_map_node = nodes.new(type="ShaderNodeNormalMap")
+            claearcoat_normal_map_node.space = 'TANGENT'
+
+            if isinstance(self.clearcoat_normal, Path):
+                claearcoat_normal_tex_node = nodes.new(type="ShaderNodeTexImage")
+                
+                if IS_BPY_279:
+                    claearcoat_normal_tex_node.color_space = 'NONE'
+                    
+                claearcoat_normal_tex_node.image = bpy.data.images.load(
+                    filepath=str(self.clearcoat_normal))
+                
+                if not IS_BPY_279:
+                    claearcoat_normal_tex_node.image.colorspace_settings.name = 'Non-Color'
+                
+                self.tex_nodes.append(claearcoat_normal_tex_node)
+                links.new(claearcoat_normal_map_node.inputs['Color'], claearcoat_normal_tex_node.outputs['Color']) # [1] -> [0]
+            elif isinstance(self.clearcoat_normal, tuple):
+                claearcoat_normal_map_node.inputs['Color'].default_value = self.clearcoat_normal # [1]
+                
+            links.new(bsdf_node.inputs['Clearcoat Normal'], claearcoat_normal_map_node.outputs['Normal'])
+                
+        if self.clearcoat_roughness:
+            self._add_input(self.clearcoat_roughness, 'Clearcoat Roughness', 'NONE', bsdf_node)
+        
+        if self.clearcoat_weight:
+            self._add_input(self.clearcoat_weight, 'Clearcoat', 'NONE', bsdf_node)
 
         # if self.opacity:
         #     self._add_input(self.opacity, self.SPECULAR_INP_ID, 'NONE',
         #                     bsdf_node, invert=False)
 
         if self.ior:
-            self._add_input(self.ior, self.IOR_INP_ID, 'NONE', bsdf_node)
+            self._add_input(self.ior, 'IOR', 'NONE', bsdf_node) # self.IOR_INP_ID
 
         output_node = nodes["Material Output"]
 
         if self.height:
-            bump_node = nodes.new(type="ShaderNodeBump")
-            bump_node.inputs[0].default_value = self.height_scale
-            if self.normal:
-                links.new(bump_node.inputs[3], normal_map_node.outputs[0])
-
+            height_tex_node = None
             if isinstance(self.height, Path):
                 height_tex_node = nodes.new(type="ShaderNodeTexImage")
-                height_tex_node.color_space = 'NONE'
-                height_tex_node.image = bpy.data.images.load(
-                    filepath=str(self.height))
+                
+                if IS_BPY_279:
+                    height_tex_node.color_space = 'NONE'
+                    
+                height_tex_node.image = bpy.data.images.load(filepath=str(self.height))
+                
+                if not IS_BPY_279:
+                    height_tex_node.image.colorspace_settings.name = 'Non-Color'
+                
                 self.tex_nodes.append(height_tex_node)
-                links.new(bump_node.inputs[0],
-                          height_tex_node.outputs[0])
-            elif isinstance(self.height, float):
-                bump_node.inputs[0].default_value = self.height
+                    
+            if self.do_real_displacement:
+                displacement_node = nodes.new(type = "ShaderNodeDisplacement")
+                displacement_node.inputs['Scale'].default_value = self.height_scale
+                displacement_node.inputs['Midlevel'].default_value = 0.5
+                
+                if self.normal:
+                    links.new(displacement_node.inputs['Normal'], normal_map_node.outputs['Normal'])
+                    links.new(bsdf_node.inputs['Normal'], normal_map_node.outputs['Normal'])
+                    
+                    if height_tex_node is not None:
+                        links.new(displacement_node.inputs['Height'], height_tex_node.outputs['Color'])
+                    
+                elif isinstance(self.height, float):
+                    displacement_node.inputs['Height'].default_value = self.height # [0]
+            else:
+                bump_node = nodes.new(type="ShaderNodeBump")
+                bump_node.inputs['Strength'].default_value = self.height_scale # [0]
+                
+                if self.normal:
+                    links.new(bump_node.inputs['Normal'], normal_map_node.outputs['Normal']) # [3] -> [0]
 
-            links.new(bsdf_node.inputs[self.NORMAL_INP_ID],
-                      bump_node.outputs[0])
+                    if height_tex_node is not None:
+                        links.new(bump_node.inputs['Height'], height_tex_node.outputs['Color']) # [0] -> [0]
+                elif isinstance(self.height, float):
+                    bump_node.inputs['Height'].default_value = self.height # [0]
+                links.new(bsdf_node.inputs['Normal'], bump_node.outputs['Normal']) # [self.NORMAL_INP_ID] -> [0]
         elif self.normal:
-            links.new(bsdf_node.inputs[self.NORMAL_INP_ID],
-                      normal_map_node.outputs[0])
+            links.new(bsdf_node.inputs['Normal'], normal_map_node.outputs['Normal']) # [self.NORMAL_INP_ID] -> [0]
 
         self.connect_scale_node(self.tex_nodes)
-
-        links.new(output_node.inputs[0], bsdf_node.outputs[0])
+        links.new(output_node.inputs['Surface'], bsdf_node.outputs['BSDF']) # [0] -> [0]
+        
+        if self.do_real_displacement:
+            links.new(output_node.inputs['Displacement'], displacement_node.outputs['Displacement'])
 
     def mean_roughness(self):
         if isinstance(self.roughness, Path):
@@ -596,9 +682,16 @@ class AittalaMaterial(NodesMaterial):
         links = self.bobj.node_tree.links
 
         normal_tex_node = nodes.new(type="ShaderNodeTexImage")
-        normal_tex_node.color_space = 'NONE'
+        
+        if IS_BPY_279:
+            normal_tex_node.color_space = 'NONE'
+            
         normal_tex_node.image = bpy.data.images.load(
             filepath=str(self.normal_map_path))
+        
+        if not IS_BPY_279:
+            normal_tex_node.image.colorspace_settings.name = 'Non-Color'
+        
         normal_map_node = nodes.new(type="ShaderNodeNormalMap")
         normal_map_node.space = 'TANGENT'
         links.new(normal_map_node.inputs[1], normal_tex_node.outputs[0])
@@ -612,14 +705,26 @@ class AittalaMaterial(NodesMaterial):
             filepath=str(self.specular_map_path))
 
         aniso_tex_node = nodes.new(type="ShaderNodeTexImage")
-        aniso_tex_node.color_space = 'NONE'
+        
+        if IS_BPY_279:
+            aniso_tex_node.color_space = 'NONE'
+            
         aniso_tex_node.image = bpy.data.images.load(
             filepath=str(self.anisotropy_map_path))
+        
+        if not IS_BPY_279:
+            aniso_tex_node.image.colorspace_settings.name = 'Non-Color'
 
         rough_tex_node = nodes.new(type="ShaderNodeTexImage")
-        rough_tex_node.color_space = 'NONE'
+        
+        if IS_BPY_279:
+            rough_tex_node.color_space = 'NONE'
+            
         rough_tex_node.image = bpy.data.images.load(
             filepath=str(self.roughness_map_path))
+        
+        if not IS_BPY_279:
+            rough_tex_node.image.colorspace_settings.name = 'Non-Color'
 
         self.connect_scale_node([normal_tex_node,
                                  diff_tex_node,
