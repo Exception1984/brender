@@ -41,7 +41,7 @@ class Camera:
 
 
 class BasicCamera(Camera):
-    def __init__(self, scene, position, rotation):
+    def __init__(self, scene, position, rotation, fov_deg = None):
         with scene.select():
             bpy.ops.object.camera_add()
             super().__init__(bpy.context.object)
@@ -55,6 +55,13 @@ class BasicCamera(Camera):
         # Upright to Z looking towards negative X
         self.bobj.rotation_mode = 'XYZ'
         self.bobj.rotation_euler = rotation
+
+        if fov_deg is not None:
+            cam = self.bobj.data
+            cam.type = 'PERSP'
+            cam.lens_unit = 'FOV'
+            cam.angle = fov_deg / 180 * math.pi
+
         self.base_dist = _vec_len(self.position)
 
     def set_location(self, location):

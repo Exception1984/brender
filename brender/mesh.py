@@ -259,6 +259,7 @@ class Mesh:
                     else:
                         uv_density *= base_size
                     bobj.pass_index = PASS_INDEX_UV_DENSITY_MULT * uv_density
+                    a = 0
 
     def compute_min_pos(self):
         return self.bobj.location[2] - _compute_bounding_size(self.bobj)[1] / 2
@@ -352,9 +353,9 @@ class Empty(object):
 
 
 class Sphere(Mesh):
-    def __init__(self, location, radius, segments=128, rings=64, **kwargs):
+    def __init__(self, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), radius = 0.5, segments=128, rings=64, **kwargs):
         # bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=1.0, calc_uvs=True, enter_editmode=False, align='WORLD', location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), scale=(0.0, 0.0, 0.0))
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=location, segments=segments, ring_count=rings)
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=location, rotation = rotation, segments=segments, ring_count=rings)
         bobj = bpy.context.selected_objects[0]
         # bpy.ops.object.mode_set(mode='EDIT')
         
@@ -390,7 +391,7 @@ class Plane(Mesh):
         bpy.ops.mesh.primitive_plane_add(size=size, location=location, rotation=rotation)
         bobj = bpy.context.selected_objects[0]
         
-        super().__init__([bobj], **kwargs)
+        super().__init__(bobj, **kwargs)
         
 class PhotoCanvas(Mesh):
     def __init__(self, size=2.0, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), **kwargs):

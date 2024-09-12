@@ -43,3 +43,16 @@ class PointLight(Light):
         # scene.objects.active = lamp_object
         
         super().__init__(bobj, **kwargs)
+
+class SunLight(Light):
+    def __init__(self, size = 1.5, location = (0.0, 0.0, 0.0), energy = 500, **kwargs):
+        # scene = bpy.context.scene
+        
+        # bpy.ops.object.light_add(type='POINT', radius=1.0, align='WORLD', location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), scale=(0.0, 0.0, 0.0))
+        bpy.ops.object.light_add(type = 'SUN', location=location)
+        bobj = bpy.context.selected_objects[0]
+        
+        bobj.data.shadow_soft_size = size
+        bobj.data.energy = energy
+        
+        super().__init__(bobj, **kwargs)

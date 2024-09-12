@@ -6,6 +6,8 @@ from contextlib import contextmanager
 import skimage
 import skimage.io
 
+import os
+
 from toolbox.io.images import load_hdr
 
 BPY_VERSION_MAJOR = bpy.app.version[0]
@@ -18,11 +20,9 @@ class BackgroundMode(enum.Enum):
     ENVMAP = enum.auto()
     COLOR = enum.auto()
 
-
 class Engine(enum.Enum):
     CYCLES = 'CYCLES'
     BLENDER = 'BLENDER_RENDER'
-
 
 class Scene:
     _current = None
@@ -225,6 +225,7 @@ class Scene:
         with tempfile.NamedTemporaryFile(suffix=f'.{format}') as f:
             self.render(f.name)
             if format in {'hdr', 'exr'}:
+                os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
                 return load_hdr(f.name)
             else:
                 return skimage.img_as_float(skimage.io.imread(f.name))
@@ -289,6 +290,9 @@ class Scene:
             self._envmap_mapping_node.rotation = rotation
         else:
             self._envmap_mapping_node.inputs['Rotation'].default_value = rotation
+
+    def set_render_engine(self, engine_enum):
+        self.bobj.render.engine = engine_enum.value
 
     def clear_materials(self):
         for material in bpy.data.materials:
