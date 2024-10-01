@@ -22,7 +22,9 @@ class BackgroundMode(enum.Enum):
 
 class Engine(enum.Enum):
     CYCLES = 'CYCLES'
-    BLENDER = 'BLENDER_RENDER'
+    # BLENDER = 'BLENDER_RENDER'
+    EEVEE = 'BLENDER_EEVEE'
+    WORKBENCH = 'BLENDER_WORKBENCH'
 
 class Scene:
     _current = None
@@ -39,7 +41,7 @@ class Scene:
                  diffuse_samples=2,
                  specular_samples=2,
                  num_samples=256,
-                 background_mode=BackgroundMode.ENVMAP,
+                 background_mode = BackgroundMode.ENVMAP,
                  background_color=(0, 0, 0, 1),
                  bscene=None,
                  improved_quality = False,
@@ -56,7 +58,7 @@ class Scene:
         else:
             self.bobj = bscene
 
-        self.bobj.render.engine = engine.value        
+        self.bobj.render.engine = engine.value
         self.bobj.cycles.device = device
         self.bobj.cycles.samples = num_samples
         self.bobj.render.tile_x = tile_size[0]
@@ -92,73 +94,76 @@ class Scene:
             self.bobj.world.light_settings.use_ambient_occlusion = False # Yes, False!
             self.bobj.world.light_settings.distance = 0.2
             self.bobj.view_layers['View Layer'].use_pass_ambient_occlusion = True
-            
-            # Activate Denoising Data
-            self.bobj.view_layers['View Layer'].cycles.denoising_store_passes = True
-            
-            # Add Denoise Node to Compositing
-            tree = self.bobj.node_tree
-            tree_nodes = tree.nodes
-            tree_links = tree.links
-            
-            for link in tree_links:
-                tree_links.remove(link)
 
-            composite_node = tree.nodes["Composite"] # 'CompositorNodeComposite'
-            render_layers = tree.nodes["Render Layers"] # 'CompositorNodeRLayers'
-            denoise_node = tree_nodes.new(type = "CompositorNodeDenoise")
-            denoise_node.use_hdr = True
+            if engine == Engine.CYCLES:
+                # Activate Denoising Data
+                self.bobj.view_layers['View Layer'].cycles.denoising_store_passes = True
+                
+                # Add Denoise Node to Compositing
+                tree = self.bobj.node_tree
+                tree_nodes = tree.nodes
+                tree_links = tree.links
+                
+                for link in tree_links:
+                    tree_links.remove(link)
+
+                composite_node = tree.nodes["Composite"] # 'CompositorNodeComposite'
+                render_layers = tree.nodes["Render Layers"] # 'CompositorNodeRLayers'
+                denoise_node = tree_nodes.new(type = "CompositorNodeDenoise")
+                denoise_node.use_hdr = True
+                
+                mix_node = tree_nodes.new(type = "CompositorNodeMixRGB")
+                mix_node.blend_type = "MULTIPLY"
+                mix_node.inputs["Fac"].default_value = 0.4
+                
+                tree_links.new(render_layers.outputs["Noisy Image"], mix_node.inputs[1])
+                tree_links.new(render_layers.outputs["AO"], mix_node.inputs[2])
+
+                # tree_links.new(render_layers.outputs["Noisy Image"], denoise_node.inputs["Image"])
+                tree_links.new(mix_node.outputs[0], denoise_node.inputs["Image"])
+                tree_links.new(render_layers.outputs["Denoising Normal"], denoise_node.inputs["Normal"])
+                tree_links.new(render_layers.outputs["Denoising Albedo"], denoise_node.inputs["Albedo"])
+                tree_links.new(denoise_node.outputs["Image"], composite_node.inputs["Image"])
+
+        if engine == Engine.CYCLES:
             
-            mix_node = tree_nodes.new(type = "CompositorNodeMixRGB")
-            mix_node.blend_type = "MULTIPLY"
-            mix_node.inputs["Fac"].default_value = 0.4
-            
-            tree_links.new(render_layers.outputs["Noisy Image"], mix_node.inputs[1])
-            tree_links.new(render_layers.outputs["AO"], mix_node.inputs[2])
-
-            # tree_links.new(render_layers.outputs["Noisy Image"], denoise_node.inputs["Image"])
-            tree_links.new(mix_node.outputs[0], denoise_node.inputs["Image"])
-            tree_links.new(render_layers.outputs["Denoising Normal"], denoise_node.inputs["Normal"])
-            tree_links.new(render_layers.outputs["Denoising Albedo"], denoise_node.inputs["Albedo"])
-            tree_links.new(denoise_node.outputs["Image"], composite_node.inputs["Image"])
-
-        # Make envmap invisible to camera.
-        if self.background_mode == BackgroundMode.DISABLED:
-            self.bobj.world.cycles_visibility.camera = False
-        else:
-            self.bobj.world.cycles_visibility.camera = True
-
-        if device == 'GPU':
-            if self.bpy_v_major == 2 and self.bpy_v_minor < 80:
-                prefs = bpy.context.user_preferences.addons['cycles'].preferences
+            # Make envmap invisible to camera.
+            if self.background_mode == BackgroundMode.DISABLED:
+                self.bobj.world.cycles_visibility.camera = False
             else:
-                prefs = bpy.context.preferences.addons['cycles'].preferences
-            
-            bpy.context.scene.cycles.device = "GPU"
-            prefs.compute_device_type = 'CUDA'
-            deviceList = prefs.get_devices()
-            
-            # for deviceTuple in deviceList:
-            #     print("Devices:")
-            #     for device in deviceTuple:
-            #         print(f"\t{device.name} ({device.type}) {device.use}")
-            
-            for d_idx, d in enumerate(prefs.devices):
-                # d["use"] = 1 # Using all devices, include GPU and CPU
+                self.bobj.world.cycles_visibility.camera = True
 
-                if d.type == 'CUDA':
-                    d.use = True
-                    
-                    if gpu_indices is not None:
-                        if d_idx in gpu_indices: # >= 2: # 3: # Only use GPU 2 and 3
-                            d.use = True
-                        else:
-                            d.use = False
+            if device == 'GPU':
+                if self.bpy_v_major == 2 and self.bpy_v_minor < 80:
+                    prefs = bpy.context.user_preferences.addons['cycles'].preferences
+                else:
+                    prefs = bpy.context.preferences.addons['cycles'].preferences
+                
+                bpy.context.scene.cycles.device = "GPU"
+                prefs.compute_device_type = 'CUDA'
+                deviceList = prefs.get_devices()
+                
+                # for deviceTuple in deviceList:
+                #     print("Devices:")
+                #     for device in deviceTuple:
+                #         print(f"\t{device.name} ({device.type}) {device.use}")
+                
+                for d_idx, d in enumerate(prefs.devices):
+                    # d["use"] = 1 # Using all devices, include GPU and CPU
+
+                    if d.type == 'CUDA':
+                        d.use = True
                         
-                    print(d["name"], d_idx, d["use"])
-                    
-            # prefs.devices[0].use = True
-            # bpy.ops.wm.save_userpref()
+                        if gpu_indices is not None:
+                            if d_idx in gpu_indices: # >= 2: # 3: # Only use GPU 2 and 3
+                                d.use = True
+                            else:
+                                d.use = False
+                            
+                        print(d["name"], d_idx, d["use"])
+                        
+                # prefs.devices[0].use = True
+                # bpy.ops.wm.save_userpref()
 
         self.camera = None
         self.shape = shape

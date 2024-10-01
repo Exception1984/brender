@@ -6,6 +6,7 @@ import mathutils
 from .world_scale_uvs import measure_uv_density
 from toolbox import cameras
 
+import math
 
 _context_stack = []
 
@@ -16,6 +17,9 @@ BPY_VERSION_MAJOR = bpy.app.version[0]
 BPY_VERSION_MINOR = bpy.app.version[1]
 
 IS_BPY_279 = BPY_VERSION_MAJOR == 2 and BPY_VERSION_MINOR < 80
+
+U = 0
+V = 1
 
 @contextmanager
 def select_object(bobj):
@@ -239,7 +243,7 @@ class Mesh:
                     bpy.ops.mesh.faces_shade_smooth()
 
                 bpy.ops.object.modifier_add(type='EDGE_SPLIT')
-                bpy.context.object.modifiers["EdgeSplit"].split_angle = 1.32645
+                bpy.context.object.modifiers["EdgeSplit"].split_angle = 1.32645 # 76 degrees
                 # bpy.context.object.data.show_double_sided = True
 
     def set_uv_density(self, uv_density):
@@ -351,12 +355,101 @@ class Empty(object):
     def set_rotation(self, rotation):
         self.bobj.rotation_euler = rotation
 
+class Cone(Mesh):
+    def __init__(self, vertices=32, radius1=1.0, radius2=0.0, depth=2.0, location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), **kwargs):
+        # primitive_cone_add(vertices=32, radius1=1.0, radius2=0.0, depth=2.0, end_fill_type='NGON', view_align=False, enter_editmode=False, location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0)
+        bpy.ops.mesh.primitive_cone_add(vertices=vertices, radius1=radius1, radius2=radius2, depth=depth, location=location, rotation=rotation)
+        bobj = bpy.context.selected_objects[0]
+
+        # Fix UV coordinates to be more UV-space-filling
+        me = bobj.data
+        uv_layer = me.uv_layers.active.data
+
+        u_min, v_min = 1.0, 1.0
+        u_max, v_max = 0.0, 0.0
+
+        for vertex in uv_layer:
+                u = vertex.uv[U]
+                v = vertex.uv[V]
+
+                if u < 0.5: # Only the outer surface part
+                    u_min = min(u, u_min)
+                    u_max = max(u, u_max)
+                    v_min = min(v, v_min)
+                    v_max = max(v, v_max)
+
+        u_range = u_max - u_min
+        v_range = v_max - v_min
+
+        u_scale = 1.0 / u_range
+        v_scale = 1.0 / v_range
+
+        for vertex in uv_layer:
+
+            u = vertex.uv[U]
+            v = vertex.uv[V]
+
+            if u < 0.5:
+                vertex.uv[U] = u_scale * (u - u_min)
+                vertex.uv[V] = v_scale * (v - v_min)
+
+        super().__init__(bobj, **kwargs)
+
+class Cylinder(Mesh):
+    def __init__(self, vertices=32, radius=1.0, depth=2.0, location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), **kwargs):
+        # primitive_cylinder_add(vertices=32, radius=1.0, depth=2.0, end_fill_type='NGON', view_align=False, enter_editmode=False, location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0)
+        bpy.ops.mesh.primitive_cylinder_add(vertices=vertices, radius=radius, depth=depth, location=location, rotation=rotation)
+        bobj = bpy.context.selected_objects[0]
+
+        # Fix UV coordinates to be more UV-space-filling
+        me = bobj.data
+        uv_layer = me.uv_layers.active.data
+
+        u_min, v_min = 1.0, 1.0
+        u_max, v_max = 0.0, 0.0
+
+        for vertex in uv_layer:
+                u = vertex.uv[U]
+                v = vertex.uv[V]
+
+                if v >= 0.5: # Only the outer surface part
+                    u_min = min(u, u_min)
+                    u_max = max(u, u_max)
+                    v_min = min(v, v_min)
+                    v_max = max(v, v_max)
+
+        u_range = u_max - u_min
+        v_range = v_max - v_min
+
+        u_scale = 1.0 / u_range
+        v_scale = 1.0 / v_range
+
+        for vertex in uv_layer:
+            
+            u = vertex.uv[U]
+            v = vertex.uv[V]
+
+            if v >= 0.5:
+                vertex.uv[U] = u_scale * (u - u_min)
+                vertex.uv[V] = v_scale * (v - v_min)
+
+                vertex.uv[U] = 2.0 * vertex.uv[U] - 0.5
+                vertex.uv[V] = 2.0 * (vertex.uv[V] / math.pi) # To avoid stretching distortion
+
+        super().__init__(bobj, **kwargs)
 
 class Sphere(Mesh):
     def __init__(self, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), radius = 0.5, segments=128, rings=64, **kwargs):
         # bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=1.0, calc_uvs=True, enter_editmode=False, align='WORLD', location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), scale=(0.0, 0.0, 0.0))
         bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=location, rotation = rotation, segments=segments, ring_count=rings)
         bobj = bpy.context.selected_objects[0]
+
+        me = bobj.data
+        uv_layer = me.uv_layers.active.data
+
+        for vertex in uv_layer:
+            vertex.uv[U] = 2 * vertex.uv[U]
+
         # bpy.ops.object.mode_set(mode='EDIT')
         
         # if IS_BPY_279:
@@ -376,14 +469,15 @@ class Sphere(Mesh):
 
 class Monkey(Mesh):
 
-    def __init__(self, position, **kwargs):
-        bpy.ops.mesh.primitive_monkey_add(location=position, calc_uvs=True)
+    def __init__(self, size = 1.0, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), **kwargs):
+        bpy.ops.mesh.primitive_monkey_add(size = size, location = location, rotation = rotation, calc_uvs = True)
         bobj = bpy.context.selected_objects[0]
-        with select_object(bobj):
-            with edit_mode():
-                bpy.ops.object.modifier_add(type='SUBSURF')
-        super().__init__([bobj], **kwargs)
 
+        # with select_object(bobj):
+        #     with edit_mode():
+        #         bpy.ops.object.modifier_add(type='SUBSURF')
+
+        super().__init__(bobj, **kwargs)
 
 class Plane(Mesh):
     def __init__(self, size=2.0, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), **kwargs):
@@ -442,6 +536,16 @@ class PhotoCanvas(Mesh):
         
         super().__init__(bobj, **kwargs)
 
+class Torus(Mesh):
+    # bpy.ops.mesh.primitive_torus_add(location=(0.0, 0.0, 0.0), view_align=False, rotation=(0.0, 0.0, 0.0), major_radius=1.0, minor_radius=0.25, major_segments=48, minor_segments=12, use_abso=False, abso_major_rad=1.0, abso_minor_rad=0.5)
+    def __init__(self, major_radius = 1.0, minor_radius = 0.25, major_segments = 48,
+                 minor_segments = 12, location = (0.0, 0.0, 0.0), rotation = (0.0, 0.0, 0.0), **kwargs):
+        bpy.ops.mesh.primitive_torus_add(major_radius = major_radius, minor_radius = minor_radius,
+                           major_segments = major_segments, minor_segments = minor_segments,
+                           location = location, rotation = rotation)
+        bobj = bpy.context.selected_objects[0]
+
+        super().__init__(bobj, **kwargs)
 
 
 def set_material(bobj, material):
